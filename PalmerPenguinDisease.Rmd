@@ -1,0 +1,715 @@
+---
+title: "Random Forest on Palmer Penguins Data"
+author: "PC Manefeldt"
+date: "2024-12-05"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+# Setup
+
+```{r}
+rm(list=ls())
+gc()
+```
+
+
+```{r}
+library('ranger')
+library('tuneRanger')
+library('vegan') # For stepacross function in ISOMAP functions
+library(ggplot2); library(tibble) # Variable Importance Plot
+library('mapview'); library("leaflet"); library("leafpop") # Interactive plotting
+source("./IsomapFunctions.R")
+source("./ThesisScript.R")
+source("./PCO_ACP_Plotting.R")
+```
+
+
+# Data
+
+```{r}
+source("../Palmer Penguins Example/PenguinsData.R")
+class.labels <- as.factor(as.matrix(dat[,1])[,1])
+predictor.mat <- as.matrix(dat[,-1])
+```
+
+# Random Forest
+
+## Tuning
+
+```{r}
+penguin.task <- makeClassifTask(data=dat, target="species")
+estimateTimeTuneRanger(penguin.task)
+# Tuning
+res = tuneRanger(penguin.task, measure = list(multiclass.brier), num.trees = 2000,parameters = list(replace = TRUE),num.threads = 4, iters = 100, iters.warmup = 100, save.file.path = NULL)
+# Mean of best 5 % of the results
+res
+#Model with the new tuned hyperparameters
+res$model
+```
+
+## Training
+
+```{r}
+set.seed(123)
+penguin.mod <- tmp.mod <- ranger(species~.,data=dat, importance="permutation",
+                  mtry=2,
+                  min.node.size = 2, 
+                  sample.fraction =0.8264299,
+                  num.trees = 2000,
+                  keep.inbag=TRUE)
+```
+# Performance
+
+## OOB performance
+
+```{r}
+tmp.mod$confusion.matrix
+tmp.mod$prediction.error
+```
+
+```{r}
+knitr::kable(tmp.mod$confusion.matrix,format = 'latex')
+1-tmp.mod$prediction.error
+```
+
+
+## Training performance
+
+```{r}
+hh <- predict(tmp.mod,dat)
+table(hh$predictions,dat$species)
+sum(diag(table(hh$predictions,dat$species)))/nrow(dat)
+```
+
+
+```{r}
+#pdf("plots/heartvarimp.pdf")
+ggplot(
+    enframe(
+        tmp.mod$variable.importance,
+        name = "variable",
+        value = "importance"
+    ),
+    aes(
+        x = reorder(variable, importance),
+        y = importance,
+        fill = importance
+    )
+) +
+    geom_bar(stat = "identity", position = "dodge") +
+    coord_flip() +
+    ylab("Variable Importance") +
+    xlab("") +
+    #ggtitle("Permutation Variable Importance Plot") +
+    guides(fill = "none") +
+    scale_fill_gradient(low = "red", high = "blue")+ 
+    theme_classic()
+#dev.off()
+```
+
+# Original/Full Proximity Measure
+
+```{r, fig.asp=1}
+tmp.dat <- dat
+mod <- tmp.mod
+aa <- extract_proximity_full(fit=mod,olddata = tmp.dat)
+dissim.mat1 <- sqrt(1-aa)
+```
+
+# Plotting
+
+
+```{r}
+tmp.dat <- dat[,-1]#[1:200,]
+Class <- dat$species
+
+
+Class.int <- as.numeric(Class)
+#col.vec <- c(rgb(0,0,0,0.8),rgb(1,0,0,0.8),rgb(0,1,0,0.8))
+col.vec <- adjustcolor(RColorBrewer::brewer.pal(n=length(levels(Class)), name='Dark2'),alpha.f = 0.8)
+#col.vec <- adjustcolor(RColorBrewer::brewer.pal(n=length(levels(Class)), name='YlOrRd'),alpha.f = 0.5)
+#col.vec <- adjustcolor(RColorBrewer::brewer.pal(n=length(levels(Class)), name='YlOrRd'),alpha.f = 1)
+cols <- col.vec[Class.int]
+mod <- tmp.mod
+```
+
+
+## PCO Proximity plot with classes added
+
+```{r,fig.asp=1}
+#pdf("plots/palmerproxplot.pdf")
+par(mar=c(2.1, 2.1, 0.1, 0.1))
+# Epsilon of 0.88 gives 1 dimensional solution
+eig.isomap.sol <- eig.isomap.fun(dist.mat = dissim.mat1[], eps=1.1,
+                                 Trace=FALSE, shortest=FALSE)
+tmp.coords <- eigs.to.coords.fun(eig.isomap.sol$eig.obj,p=2)[[1]][,1:2]
+plot(tmp.coords,
+     asp=1,
+     col=cols,
+     pch=16,,
+     xaxt='n',yaxt='n', ylab="",xlab="", cex=1)
+mtext("Dim 1",side=1,line = 0.5,cex = 1.2)
+mtext("Dim 2",side=2,line = 0.5,cex = 1.2)
+legend(x="bottomright",col=col.vec,
+       legend = levels(Class),
+       pch=16)
+#dev.off()
+```
+
+
+## Isomap proximity plot with class
+
+```{r,fig.asp=1}
+#pdf("plots/palmerisomapplot.pdf")
+par(mar=c(2.1, 2.1, 0.1, 0.1))
+# Epsilon of 0.88 gives 1 dimensional solution
+eig.isomap.sol <- eig.isomap.fun(dist.mat = dissim.mat1[], eps=1,
+                                 Trace=FALSE, shortest=FALSE)
+tmp.coords <- eigs.to.coords.fun(eig.isomap.sol$eig.obj,p=2)[[1]][,1:2]
+plot(tmp.coords,
+     asp=1,
+     col=cols,
+     pch=16,#c(16,17)[heart.df$sex],
+     xaxt='n',yaxt='n', ylab="",xlab="", cex=1)
+mtext("Dim 1",side=1,line = 0.5,cex = 1.2)
+mtext("Dim 2",side=2,line = 0.5,cex = 1.2)
+legend(x="bottomright",col=col.vec,
+       legend = levels(Class),
+       pch=16)
+#dev.off()
+
+```
+
+
+
+# Bootstrap confidence regions
+
+## PCO bootstrap confidence regions based on Tukey depth and alpha bags
+```{r}
+tmp.mod <- penguin.mod
+
+n <- nrow(dat)
+set.seed(123)
+B <- 100
+p <- 2
+boot.mat <- matrix(sample(1:n,size=round(n*B,digits = 0),replace=TRUE),nrow=n,ncol=B)
+dissim.mat <- sqrt(1-extract_proximity_full(tmp.mod,dat))
+
+  A.mat <- -0.5*dissim.mat^2
+  col.centers <- colMeans(A.mat)
+  row.centers <- colMeans(t(A.mat))
+  center <-  mean(A.mat)
+  centred_mat <- apply(apply(A.mat,1,function(x)x-col.centers),
+                       1,function(x)x-row.centers)+center
+  eig.dat <- eigen(centred_mat)
+  coords <- eig.dat$vectors[,1:p,drop=FALSE]%*%diag(eig.dat$values[1:p],nrow=p)^0.5
+```
+
+
+
+```{r, fig.asp=1}
+boot.mds.map.list <- list()
+proc.stat <- numeric()
+for(i in 1:B){
+  n <- nrow(tmp.dat)
+  index <- boot.mat[,i]
+  dist.mat <- dissim.mat[index,index]
+  
+  A.mat2 <- -0.5*dist.mat^2
+  col.centers2 <- colMeans(A.mat2)
+  row.centers2 <- colMeans(t(A.mat2))
+  center2 <-  mean(A.mat2)
+  centred_mat2 <- apply(apply(A.mat2,1,function(x)x-col.centers2),
+                       1,function(x)x-row.centers2)+center2
+  
+  
+  
+  eig.dat2 <- eigen(centred_mat2)
+  # The coordinates for the factual observations
+  coords2 <- eig.dat2$vectors
+  
+  
+  new.dissim <- dissim.mat
+  new.A.mat <- -0.5*new.dissim^2
+  new.row.centers <- colMeans(t(new.A.mat))
+  new.row.centers[index] <- row.centers2
+  new.col.centers <- colMeans(new.A.mat)
+  new.col.centers[index] <- col.centers2
+  new.centred_mat <- apply(apply(new.A.mat,1,function(x)x-new.col.centers),
+                       1,function(x)x-new.row.centers)+center2
+  
+  new.eigen.vecs <- matrix(0,nrow=n,ncol=n)
+  for(j in unique(index)){
+    new.eigen.vecs[j,] <- apply(eig.dat2$vectors[which(index==j),,drop=FALSE],2,sum)
+  }
+  new.coords <- new.centred_mat%*%
+    (new.eigen.vecs)%*%diag(eig.dat2$values^(-0.5))
+
+  # Perform Orthogonal Procrustes
+  fit.X <- ortho.procrustes(Target=coords[,1:2],Testee = new.coords[,1:2])
+  coords2 <- fit.X[[1]]
+  
+  boot.mds.map.list[[i]] <- coords2
+  proc.stat[i] <- fit.X[[2]]
+}
+
+boot.mds.map.array <- simplify2array(boot.mds.map.list)
+```
+
+
+### Adding Alpha bags to indicate the sampling variability
+
+```{r, fig.asp=1}
+
+#pdf("plots/palmercRFalphabags.pdf")
+a <- par()
+par(mar=c(0.1,0.1,0.1,0.1))
+alpha <- 0.90
+grid.n <- 70
+
+# Plotting spanning ellipses instead of circles
+plot(
+coords[,1:2],
+asp=1,
+col=cols,
+main="",
+xlab="",
+ylab="",
+pch=16, axes =FALSE, 
+frame.plot=TRUE, 
+cex=0.2,
+type='n'
+)
+
+legend(x = "bottomright",legend=levels(class.labels), lty=1, col=col.vec)
+
+a <- sapply(1:dim(boot.mds.map.array)[1],function(x){
+  boot.tmp <- t(boot.mds.map.array[x,,])
+  boot.tukey.depth <- ddalpha::depth.halfspace(x=boot.tmp,data=boot.tmp, num.directions = 200)
+  grid.points <- as.matrix(expand.grid(seq(from=min(boot.tmp[,1]),to=max(boot.tmp[,1]),length.out=grid.n),
+                           seq(from=min(boot.tmp[,2]),to=max(boot.tmp[,2]),length.out=grid.n)))
+  grid.points.tukey.depth <- ddalpha::depth.halfspace(x=grid.points,data=boot.tmp, num.directions = 200)
+  grid.include.ellipse <-which(grid.points.tukey.depth>=quantile(boot.tukey.depth,1-alpha))
+
+  Plot_ConvexHull(xcoord=grid.points[grid.include.ellipse,1],ycoord=grid.points[grid.include.ellipse,2], lcolor=cols[x])
+})
+#dev.off()
+```
+
+
+
+
+
+
+## Isomap bootstrap confidence regions based on Tukey depth and alpha bags
+
+
+```{r}
+# n <- nrow(dat)
+# #set.seed(123)
+# B <- 100
+# boot.mat <- matrix(sample(1:n,size=round(n*B,digits = 0),replace=TRUE),nrow=n,ncol=B)
+dissim.mat.org <- sqrt(1-extract_proximity_full(tmp.mod,dat))
+  s.paths <- stepacross(dissim.mat.org,
+                            path='extended',
+                            toolong=1, 
+                            trace = FALSE)
+
+  dissim.mat <- as.matrix(s.paths)
+
+  A.mat <- -0.5*dissim.mat^2
+  col.centers <- colMeans(A.mat)
+  row.centers <- colMeans(t(A.mat))
+  center <-  mean(A.mat)
+  centred_mat <- apply(apply(A.mat,1,function(x)x-col.centers),
+                       1,function(x)x-row.centers)+center
+  eig.dat <- eigen(centred_mat)
+  coords <- eig.dat$vectors[,1:p,drop=FALSE]%*%diag(eig.dat$values[1:p],nrow=p)^0.5
+
+```
+
+
+```{r, fig.asp=1}
+boot.mds.map.list <- list()
+proc.stat <- numeric()
+for(i in 1:B){
+  n <- nrow(tmp.dat)
+  index <- boot.mat[,i]
+  dist.mat <- dissim.mat.org[index,index]
+  s.paths <- stepacross(dist.mat,
+                        path='extended',
+                        toolong=1, 
+                        trace = FALSE)
+
+  dist.mat <- as.matrix(s.paths)
+  
+  A.mat2 <- -0.5*dist.mat^2
+  col.centers2 <- colMeans(A.mat2)
+  row.centers2 <- colMeans(t(A.mat2))
+  center2 <-  mean(A.mat2)
+  centred_mat2 <- apply(apply(A.mat2,1,function(x)x-col.centers2),
+                       1,function(x)x-row.centers2)+center2
+  
+  eig.dat2 <- eigen(centred_mat2)
+  
+  new.dissim <- dissim.mat
+  new.A.mat <- -0.5*new.dissim^2
+  new.row.centers <- colMeans(t(new.A.mat))
+  new.row.centers[index] <- row.centers2
+  new.col.centers <- colMeans(new.A.mat)
+  new.col.centers[index] <- col.centers2
+  new.centred_mat <- apply(apply(new.A.mat,1,function(x)x-new.col.centers),
+                       1,function(x)x-new.row.centers)+center2
+  
+  new.eigen.vecs <- matrix(0,nrow=n,ncol=n)
+  for(j in unique(index)){
+    new.eigen.vecs[j,] <- apply(eig.dat2$vectors[which(index==j),,drop=FALSE],2,sum)
+  }
+  new.coords <- new.centred_mat%*%
+    (new.eigen.vecs)%*%diag(eig.dat2$values^(-0.5))
+
+  # Perform Orthogonal Procrustes
+  fit.X <- ortho.procrustes(Target=coords[,1:2],Testee = new.coords[,1:2])
+  coords2 <- fit.X[[1]]
+  
+  boot.mds.map.list[[i]] <- coords2
+  proc.stat[i] <- fit.X[[2]]
+}
+
+boot.mds.map.array <- simplify2array(boot.mds.map.list)
+
+```
+
+
+
+```{r, fig.asp=1}
+#pdf("plots/palmerisoRFalphabags.pdf")
+par(mar=c(0.1,0.1,0.1,0.1))
+alpha <- 0.90
+grid.n <- 70
+
+# Plotting spanning ellipses instead of circles
+plot(
+coords[,1:2],
+asp=1,
+col=cols,
+main="",
+xlab="",
+ylab="",
+pch=16, axes =FALSE, frame.plot=TRUE, cex=1
+,xlim=range(coords[,1])+c(-0.1,0.05),ylim=range(coords[,2])+c(-0.05,0.1)
+,type='n'
+)
+
+legend(x = "bottomright",legend=levels(class.labels), lty=1, col=col.vec)
+
+a <- sapply(1:dim(boot.mds.map.array)[1],function(x){
+  boot.tmp <- t(boot.mds.map.array[x,,])
+  boot.tukey.depth <- ddalpha::depth.halfspace(x=boot.tmp,data=boot.tmp, num.directions = 200)
+  grid.points <- as.matrix(expand.grid(seq(from=min(boot.tmp[,1]),to=max(boot.tmp[,1]),length.out=grid.n),
+                           seq(from=min(boot.tmp[,2]),to=max(boot.tmp[,2]),length.out=grid.n)))
+  grid.points.tukey.depth <- ddalpha::depth.halfspace(x=grid.points,data=boot.tmp, num.directions = 200)
+  grid.include.ellipse <-which(grid.points.tukey.depth>=quantile(boot.tukey.depth,1-alpha))
+
+  Plot_ConvexHull(xcoord=grid.points[grid.include.ellipse,1],ycoord=grid.points[grid.include.ellipse,2], lcolor=cols[x])
+})
+
+#dev.off()
+```
+
+
+# Monte Carlo Error in Proximity Measure
+
+
+```{r}
+# Extracting the full proximities between every pair of observations
+extract_proximity_full_monte_carlo = function(fit, olddata, K=10) {
+  pred = predict(fit, olddata, type = "terminalNodes")$predictions
+  prox  <- prox.tmp <-  matrix(0, nrow(pred), nrow(pred))
+  diag(prox) <- diag(prox.tmp) <- 0.5
+  ntree = ncol(pred)
+  n = nrow(prox)
+  B = ncol(pred)
+  
+  if (is.null(fit$inbag.counts)) {
+    stop("call ranger with keep.inbag = TRUE")
+  }
+  
+  # Get inbag counts
+#  inbag = simplify2array(fit$inbag.counts)
+  
+
+  for (i in 1:(n-1)) {
+    for (j in (i+1):n) {
+      prox[i, j] = sum(pred[i, ] == pred[j, ]) / B
+    }
+  }
+  
+  
+  prox.monte.array <- array(NA, c(n,n,K))
+  for (k in 1:K){
+    pred.tmp <- pred[,sample(1:B,replace=TRUE)]
+    for (i in 1:(n-1)) {
+      for (j in (i+1):n) {
+        prox.tmp[i, j] = sum(pred.tmp[i, ] == pred.tmp[j, ]) / B
+      }
+    }
+    prox.monte.array[,,k] <- prox.tmp+t(prox.tmp)
+  }
+  
+  
+  output <- list(original=prox+t(prox), monte.carlo=prox.monte.array)
+  return(output)
+  
+}
+b <- Sys.time()
+a <- extract_proximity_full_monte_carlo(mod,tmp.dat,K=2)
+bb <- Sys.time()
+bb-b
+```
+
+
+```{r, fig.asp=1}
+a1.1 <- Sys.time()
+ntree <- 50#500
+K <- 30
+p <- 2
+set.seed(12345)
+pen.mod.ntree <- ranger(species~.,data=dat,
+                  mtry=2,
+                  min.node.size = 2, 
+                  sample.fraction =0.8264299,
+                  num.trees = ntree,
+                  keep.inbag=TRUE)
+mod <- pen.mod.ntree
+
+
+prox.monte.carlo.obj <- extract_proximity_full_monte_carlo(mod,tmp.dat,K=K)
+
+
+dist.mat <- sqrt(1-prox.monte.carlo.obj[[1]])
+  A.mat <- -0.5*dist.mat^2
+  col.centers <- colMeans(A.mat)
+  row.centers <- colMeans(t(A.mat))
+  center <-  mean(A.mat)
+  centred_mat <- apply(apply(A.mat,1,function(x)x-col.centers),
+                       1,function(x)x-row.centers)+center
+  eig.dat <- eigen(centred_mat)
+  coords <- eig.dat$vectors[,1:p,drop=FALSE]%*%diag(eig.dat$values[1:p],nrow=p)^0.5
+
+prox.mds.map.list <- list()
+proc.stat.monte.carlo <- numeric()
+prox.monte.carlo.array <- prox.monte.carlo.obj[[2]]
+for(k in 1:K){
+  dist.mat <- sqrt(1-prox.monte.carlo.array[,,k])
+  
+  A.mat2 <- -0.5*dist.mat^2
+  col.centers2 <- colMeans(A.mat2)
+  row.centers2 <- colMeans(t(A.mat2))
+  center2 <-  mean(A.mat2)
+  centred_mat2 <- apply(apply(A.mat2,1,function(x)x-col.centers2),
+                       1,function(x)x-row.centers2)+center2
+  
+  
+  
+  eig.dat2 <- eigen(centred_mat2)
+  # The coordinates for the factual observations
+  coords2 <- eig.dat2$vectors[,1:p,drop=FALSE]%*%diag(eig.dat2$values[1:p],nrow=p)^0.5
+  
+
+  # Perform Orthogonal Procrustes
+  fit.X <- ortho.procrustes(Target=coords[,1:2],Testee = coords2[,1:2])
+  coords2 <- fit.X[[1]]
+  
+  prox.mds.map.list[[k]] <- coords2
+  proc.stat.monte.carlo[k] <- fit.X[[2]]
+}
+
+prox.mds.map.array <- simplify2array(prox.mds.map.list)
+a1.2 <- Sys.time()
+a1.2-a1.1
+```
+
+```{r}
+mean(unlist(sapply(1:(K-1), function(i) sapply((i+1):K, function(j)sum(diag((prox.monte.carlo.array[,,i]-prox.monte.carlo.array[,,j])%*%t(prox.monte.carlo.array[,,i]-prox.monte.carlo.array[,,j])))))))/(n*(n-1))
+summary(proc.stat.monte.carlo)
+```
+
+```{r}
+#Analytical Estimate
+a <- (prox.monte.carlo.obj$original[upper.tri(prox.monte.carlo.obj$original,diag = FALSE)])
+2*sum(a*(1-a))/length(a)/ntree
+
+```
+
+
+```{r, fig.asp=1}
+for(i in 1:5){
+  plot(prox.mds.map.array[,,i],col=cols)
+}
+```
+
+
+```{r,fig.asp=1}
+#pdf("plots/palmerConteCarloBootRFs_ntree.pdf")
+par(mar=c(0.1,0.1,0.1,0.1))
+alpha <- 1
+
+# Plotting spanning ellipses instead of circles
+plot(
+coords[,1:2],
+asp=1,
+col=cols,
+main="",
+xlab="",
+ylab="",
+pch=16, 
+axes =FALSE, 
+frame.plot=TRUE,
+type="n"
+)
+
+
+legend(x = "bottomright",legend=levels(Class), pch=16, col=col.vec)
+
+a <- sapply(1:dim(prox.mds.map.array)[1],function(x){
+  prox.tmp <- t(prox.mds.map.array[x,,])
+  Plot_ConvexHull(xcoord=prox.tmp[,1],ycoord=prox.tmp[,2], lcolor=cols[x])
+})
+#dev.off()
+```
+
+
+### Prox Plot Monte Carlo with new RFs for every plot
+
+
+```{r, fig.asp=1}
+a2.1 <- Sys.time()
+set.seed(12345)
+ntree <- 500
+K <- 50
+p <- 2
+n <- nrow(tmp.dat)
+pen.mod.ntree <- ranger(species~.,data=dat,
+                  mtry=2,
+                  min.node.size = 2, 
+                  sample.fraction =0.8264299,
+                  num.trees = ntree,
+                  keep.inbag=TRUE)
+mod <- pen.mod.ntree
+
+
+prox.monte.carlo.obj <- extract_proximity_full(mod,tmp.dat)
+prox.array <- array(NA,dim=c(n,n,K))
+
+dist.mat <- sqrt(1-prox.monte.carlo.obj)
+  A.mat <- -0.5*dist.mat^2
+  col.centers <- colMeans(A.mat)
+  row.centers <- colMeans(t(A.mat))
+  center <-  mean(A.mat)
+  centred_mat <- apply(apply(A.mat,1,function(x)x-col.centers),
+                       1,function(x)x-row.centers)+center
+  eig.dat <- eigen(centred_mat)
+  coords <- eig.dat$vectors[,1:p,drop=FALSE]%*%diag(eig.dat$values[1:p],nrow=p)^0.5
+
+prox.mds.map.list <- list()
+proc.stat <- numeric()
+for(k in 1:K){
+  pen.tmp.mod.100 <- ranger(species~.,data=dat,
+                  mtry=2,
+                  min.node.size = 2, 
+                  sample.fraction =0.8264299,
+                  num.trees = ntree,
+                  keep.inbag=TRUE)
+  pen.prox.mat <- extract_proximity_full(pen.tmp.mod.100,tmp.dat)
+  prox.array[,,k] <- pen.prox.mat
+  dist.mat <- sqrt(1-pen.prox.mat)
+  
+  A.mat2 <- -0.5*dist.mat^2
+  col.centers2 <- colMeans(A.mat2)
+  row.centers2 <- colMeans(t(A.mat2))
+  center2 <-  mean(A.mat2)
+  centred_mat2 <- apply(apply(A.mat2,1,function(x)x-col.centers2),
+                       1,function(x)x-row.centers2)+center2
+  
+  
+  
+  eig.dat2 <- eigen(centred_mat2)
+  # The coordinates for the factual observations
+  coords2 <- eig.dat2$vectors[,1:p,drop=FALSE]%*%diag(eig.dat2$values[1:p],nrow=p)^0.5
+  
+
+  # Perform Orthogonal Procrustes
+  fit.X <- ortho.procrustes(Target=coords[,1:2],Testee = coords2[,1:2])
+  coords2 <- fit.X[[1]]
+  
+  prox.mds.map.list[[k]] <- coords2
+  proc.stat[k] <- fit.X[[2]]
+}
+prox.mds.map.array <- simplify2array(prox.mds.map.list)
+a2.2 <- Sys.time()
+a2.2-a2.1
+```
+
+```{r}
+mean(unlist(sapply(1:(K-1), function(i) sapply((i+1):K, function(j)sum(diag((prox.array[,,i]-prox.array[,,j])%*%t(prox.array[,,i]-prox.array[,,j])))))))/(n*(n-1))
+summary(proc.stat)
+```
+
+
+```{r, fig.asp=1}
+for(i in 1:K){
+  plot(prox.mds.map.array[,,i],col=cols)
+}
+```
+
+
+```{r,fig.asp=1}
+#pdf("plots/palmerConteCarloNewRFs_ntree.pdf")
+par(mar=c(0.1,0.1,0.1,0.1))
+alpha <- 1
+grid.n <- 50
+
+# Plotting spanning ellipses instead of circles
+plot(
+coords[,1:2],
+asp=1,
+col=cols,
+main="",
+xlab="",
+ylab="",
+pch=16, 
+axes =FALSE, 
+frame.plot=TRUE,
+type="n"
+)
+
+
+legend(x = "bottomright",legend=levels(Class), pch=16, col=col.vec)
+
+
+
+a <- sapply(1:dim(prox.mds.map.array)[1],function(x){
+  prox.tmp <- t(prox.mds.map.array[x,,])
+  Plot_ConvexHull(xcoord=prox.tmp[,1],ycoord=prox.tmp[,2], lcolor=cols[x])
+})
+#dev.off()
+```
+
+
+
+
+
+
+
+
+
+
+

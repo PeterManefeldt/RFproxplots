@@ -1,0 +1,477 @@
+---
+title: "InterpolationBiplots"
+author: "PC Manefeldt"
+date: "2024-12-02"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Setup
+
+```{r}
+rm(list=ls())
+gc()
+```
+
+
+```{r}
+library('ranger')
+library('tuneRanger')
+source("./PCO_ACP_Plotting.R")
+source("./ThesisScript.R")
+```
+
+
+# Data
+
+```{r}
+source("./PenguinsData.R")
+
+
+dat <- as.data.frame(dat)
+dat0 <- dat[,-1]
+m <- ncol(dat0)
+n <- nrow(dat0)
+```
+
+
+## Linear Interpolation Biplot
+
+
+```{r,fig.asp=1}
+#pdf(file="./graphs/interpolation/penguinlinearinterpbiplot.pdf")
+par(mar=c(0,0,0,0))
+dissim.mat.4 <- eucl.dist(scale(dat0),scale(dat0))
+obs.id <- 11#185 # Value for observation to by interpolated
+points1 <- matrix(apply(dat0,2,mean),ncol=4,nrow=4,byrow=TRUE)
+tmp <- sapply(1:4,function(x)points1[x,x]<<- dat0[obs.id,x])
+points1 <- rbind(points1,as.numeric(dat0[obs.id,]), apply(dat0,2,mean))
+
+a <- dissim.mat.4 |> pco.fun(ACP=TRUE) |> add.nonlinear.axis.dist(orig.dat=dat0,dist.fun = "eucl.dist" ,num.ticks=5) |> add.interpolated.points.dist(orig.dat=dat0,new.data = points1,dist.fun = "eucl.dist")|>mds.plot(col.vec = cols, exp.factor = NULL)
+
+offset.val.vec <- c(0.2,0.2,0.2,0.3) # By how much labels should be offset
+offset.side <- rep(1,length(a$axes.coords$tick.coords)) # Determines to which side it should be offset
+offset.side[4] <- 2
+
+tmp <- sapply(1:length(a$axes.coords$tick.coords), function(i){
+  x <- a$axes.coords$tick.coords[[i]]
+  y <- a$axes.coords$pretty.tick.vals[[i]]
+  z <- a$axes.coords$axes.coords[[i]]
+  lines(z, col=var.cols[i]);
+  
+  # Correctly Angled Tick Marks
+  dx <- (x[1,1]-x[2,1])
+  dy <- (x[1,2]-x[2,2]) 
+  m <- dy/dx
+  theta <- atan(m)*180/pi
+  theta.inv <- theta + 90
+  theta.inv <- ifelse(theta.inv>=90,theta.inv-180, theta.inv)
+  offset.value <- offset.val.vec[i]
+  offset.side.val <- offset.side[i]
+  length <- sqrt(dx^2 + dy^2)
+  perpendicular.offset <- c(-dy / length, dx / length)
+  offset.value <- ifelse(offset.side.val==2,offset.value*-1,offset.value)
+  new.pos <- x + matrix(perpendicular.offset * offset.value,ncol=2,nrow=nrow(x),byrow = TRUE)
+  graphics::text(new.pos,labels=y,
+                 cex=0.8, col=var.cols[i], srt=theta.inv)
+  graphics::text(x,labels="|",
+                 cex=0.88, col=var.cols[i], srt=theta.inv-90,adj = c(0.3,0.3))
+  })
+points(a$new.coords$new.coords[1:5,],col='red',pch=15,cex=0.75)
+points(x=sum(a$new.coords$new.coords[1:4,1]-a$new.coords$new.coords[6,1])+a$new.coords$new.coords[6,1],
+       y=sum(a$new.coords$new.coords[1:4,2]-a$new.coords$new.coords[6,2])+a$new.coords$new.coords[6,2], col='blue', cex=2)
+ legend(x='topright',legend=colnames(dat0), pch="|",lty=1,col=var.cols)
+#dev.off()
+```
+
+## Non-metric Linear Interpolation Biplot
+
+```{r,fig.asp=1}
+#pdf(file="./graphs/interpolation/penguinloginterpbiplot.pdf")
+
+#square.fun <- function(x){x^2}
+trans.fun1 <- "log"#"square.fun"
+obs.id <- 11#185
+points1 <- matrix(apply(dat0,2,mean),ncol=4,nrow=4,byrow=TRUE)
+tmp <- sapply(1:4,function(x)points1[x,x]<<- dat0[obs.id,x])
+points1 <- rbind(points1,as.numeric(dat0[obs.id,]), apply(dat0,2,mean))
+
+dissim.mat.ln <- as.matrix(dist(scale(eval(call(trans.fun1,dat0)))))
+a <- dissim.mat.ln |> 
+        pco.fun() |> 
+        add.transformed.axis(orig.dat=dat0,trans.fun = trans.fun1,exp.factor=0.1)|> 
+        add.interpolated.transformed.points.dist(orig.dat=dat0,new.data = points1,trans.fun = trans.fun1,dist.fun = "eucl.dist")|>
+        mds.plot(col.vec = cols)
+
+offset.val.vec <- c(0.2,0.2,0.2,0.3) # By how much labels should be offset
+offset.side <- rep(1,length(a$axes.coords$tick.coords)) # Determines to which side it should be offset
+offset.side[4] <- 2
+
+
+tmp <- sapply(1:length(a$axes.coords$tick.coords), function(i){
+  x <- a$axes.coords$tick.coords[[i]]
+  y <- a$axes.coords$pretty.tick.vals[[i]]
+  lines(x, col=var.cols[i]);
+
+    # Correctly Angled Tick Marks
+  dx <- (x[1,1]-x[2,1])
+  dy <- (x[1,2]-x[2,2]) 
+  m <- dy/dx
+  theta <- atan(m)*180/pi
+  theta.inv <- theta + 90
+  theta.inv <- ifelse(theta.inv>=90,theta.inv-180, theta.inv)
+  offset.value <- offset.val.vec[i]
+  offset.side.val <- offset.side[i]
+  length <- sqrt(dx^2 + dy^2)
+  perpendicular.offset <- c(-dy / length, dx / length)
+  offset.value <- ifelse(offset.side.val==2,offset.value*-1,offset.value)
+  new.pos <- x + matrix(perpendicular.offset * offset.value,ncol=2,nrow=nrow(x),byrow = TRUE)
+  graphics::text(new.pos,labels=y,
+                 cex=0.8, col=var.cols[i], srt=theta.inv)
+  graphics::text(x,labels="|",
+                 cex=0.8, col=var.cols[i], srt=theta.inv-90,adj = c(0.3,0.3))
+  
+  })
+legend(x='bottomright',legend=colnames(dat0), pch="|",lty=1,col=var.cols,cex = 1)
+
+
+points(a$new.coords$new.coords[1:4,]-matrix(a$new.coords$new.coords[6,],byrow=TRUE,ncol=2,nrow=4),col='red',pch=15,cex=0.75)
+points(a$new.coords$new.coords[5,,drop=FALSE],col='red',pch=15,cex=0.75)
+points(x=sum(a$new.coords$new.coords[1:4,1]-a$new.coords$new.coords[6,1])+a$new.coords$new.coords[6,1],
+       y=sum(a$new.coords$new.coords[1:4,2]-a$new.coords$new.coords[6,2])+a$new.coords$new.coords[6,2],
+       col='blue', cex=2)
+#dev.off()
+```
+
+
+
+## Non-linear Interpolation Biplot (Sqrt Manhattan Dist)
+
+```{r,fig.asp=1}
+#pdf(file="./graphs/interpolation/penguinsqrtmaninterpbiplot.pdf")
+par(mar=c(0,0,0,0))
+#sqrt.manhattan.dist <- function(x,y){as.matrix(proxy::dist(x,y,method = "Manhattan"))^0.5}
+#pp <- 1; sqrt.manhattan.dist <- function(x,y){as.matrix(proxy::dist(x,y,method = "Minkowski",p=pp)^(pp))^0.5}
+dissim.mat.4 <- sqrt.manhattan.dist(scale(dat0),scale(dat0))
+obs.id <- 11#185
+points1 <- matrix(apply(dat0,2,mean),ncol=4,nrow=4,byrow=TRUE)
+tmp <- sapply(1:4,function(x)points1[x,x]<<- dat0[obs.id,x])
+points1 <- rbind(points1,as.numeric(dat0[obs.id,]), apply(dat0,2,mean))
+
+a <- dissim.mat.4 |> pco.fun(ACP=TRUE) |> add.nonlinear.axis.dist(orig.dat=dat0,dist.fun = "sqrt.manhattan.dist" ,num.ticks=5) |> add.interpolated.points.dist(orig.dat=dat0,new.data = points1,dist.fun = "sqrt.manhattan.dist")|>mds.plot(col.vec = cols)
+#tmp <- sapply(a$axes.coords$tick.coords, function(x){lines(x);points(x,pch=16,cex=0.5)})
+tmp <- sapply(1:length(a$axes.coords$tick.coords), function(i){
+  x <- a$axes.coords$tick.coords[[i]]
+  y <- a$axes.coords$pretty.tick.vals[[i]]
+  z <- a$axes.coords$axes.coords[[i]]
+  lines(z, col=var.cols[i]);
+  points(x,pch=16,cex=0.5, col=var.cols[i]);
+  text(x,labels=y,pos=1,offset=0.2,cex=0.5, col=var.cols[i])
+ # ;text(x=rev(x[,1])[1],y=rev(x[,2])[1],labels=colnames(dat0)[i], cex=0.6)
+  })
+points(a$new.coords$new.coords[1:5,],col='red',pch=15,cex=0.75)
+#points(a$new.coords$new.coords[1:5,],col=c(var.cols[1:4],'red'),pch=7,cex=0.75)
+points(x=sum(a$new.coords$new.coords[1:4,1]-a$new.coords$new.coords[6,1])+a$new.coords$new.coords[6,1],
+       y=sum(a$new.coords$new.coords[1:4,2]-a$new.coords$new.coords[6,2])+a$new.coords$new.coords[6,2], col='blue', cex=2)
+#points(x=a$new.coords$new.coords[6,1],y=a$new.coords$new.coords[6,2], col='black', cex=2, lwd=2)
+legend(x='topright',legend=colnames(dat0), pch=16,lty=1,col=var.cols)
+
+#dev.off()
+```
+
+
+## RF Interpolation Biplot
+
+```{r}
+set.seed(123)
+penguin.mod <- tmp.mod <- ranger(species~.,data=dat,
+                  mtry=2,
+                  min.node.size = 2, 
+                  sample.fraction =0.8264299,
+                  num.trees = 2000,
+                  keep.inbag=TRUE)
+```
+
+```{r,fig.asp=1}
+#pdf(file="./graphs/interpolation/penguinrfinterpbiplot.pdf")
+par(mar=c(0,0,0,0))
+dissim.mat.5 <- pal.rf.dist(dat0,penguin.mod)
+
+obs.id <- 11#185
+points1 <- matrix(apply(dat0,2,mean),ncol=4,nrow=4,byrow=TRUE)
+tmp <- sapply(1:4,function(x)points1[x,x]<<- dat0[obs.id,x])
+points1 <- rbind(points1,as.numeric(dat0[obs.id,]), apply(dat0,2,mean))
+a.tmp.1 <- a <- dissim.mat.5 |> pco.fun(ACP=FALSE) |> add.nonlinear.axis(orig.dat=dat0,model=penguin.mod ,num.ticks=5, obs.ind=obs.id, num.axes.ticks = 100) 
+a |>mds.plot(col.vec = cols)
+tmp <- sapply(1:length(a$axes.coords$tick.coords), function(i){
+  x <- a$axes.coords$tick.coords[[i]]
+  y <- a$axes.coords$pretty.tick.vals[[i]]
+  z <- a$axes.coords$axes.coords[[i]]
+  lines(z, col=var.cols[i]);
+  points(x,pch=16,cex=0.5, col=var.cols[i]);
+  text(x,labels=y,pos=1,offset=0.2,cex=0.5, col=var.cols[i])
+  })
+legend(x='bottomright',legend=colnames(dat0), pch=16,lty=1,col=var.cols)
+#dev.off()
+```
+
+
+
+
+```{r, fig.asp=1}
+#pdf(file="./graphs/interpolation/penguinrfisomapinterpbiplot.pdf")
+par(mar=c(0,0,0,0))
+dissim.mat.5 <- pal.rf.dist(dat0,penguin.mod)
+
+obs.id <- 11#185
+points1 <- matrix(apply(dat0,2,mean),ncol=4,nrow=4,byrow=TRUE)
+tmp <- sapply(1:4,function(x)points1[x,x]<<- dat0[obs.id,x])
+points1 <- rbind(points1,as.numeric(dat0[obs.id,]), apply(dat0,2,mean))
+#  add.interpolated.points.dist(orig.dat=dat0,new.data = points1,dist.fun = "sqrt.manhattan.dist")
+a <- dissim.mat.5 |> eig.isomap.fun.interp(eps=1,shortest = FALSE) 
+a.tmp.2 <- a <- a |> add.isomap.axis(orig.dat=dat0,model=penguin.mod ,num.ticks=5, obs.ind=obs.id, num.axes.points = 50) 
+#tmp <- sapply(a$axes.coords$tick.coords, function(x){lines(x);points(x,pch=16,cex=0.5)})
+a |> mds.plot(col.vec=cols)
+tmp <- sapply(1:length(a$axes.coords$tick.coords), function(i){
+  x <- a$axes.coords$tick.coords[[i]]
+  y <- a$axes.coords$pretty.tick.vals[[i]]
+  z <- a$axes.coords$axes.coords[[i]]
+  lines(z, col=var.cols[i]);
+  points(x,pch=16,cex=0.5, col=var.cols[i]);
+  text(x,labels=y,pos=1,offset=0.2,cex=0.5, col=var.cols[i])
+ # ;text(x=rev(x[,1])[1],y=rev(x[,2])[1],labels=colnames(dat0)[i], cex=0.6)
+  })
+legend(x='topleft',legend=colnames(dat0), pch=16,lty=1,col=var.cols)
+#dev.off()
+```
+
+
+
+# Predictive Biplots
+
+## Linear Predictive Axes
+
+```{r, fig.asp=1}
+#pdf(file="../graphs/interpolation/penguinlinregrf.pdf")
+par(mar=c(0,0,0,0))
+coords <- a.tmp.1$coords
+
+tmp.1 <- mds.linreg(Z=coords[,1:2], dat=dat0, Class=cols,Var.cols=var.cols, axes.labels=FALSE)
+legend(x='bottomleft',legend=colnames(dat0), pch="|",lty=1,col=var.cols)
+#dev.off()
+```
+
+
+```{r, fig.asp=1}
+#pdf(file="../graphs/interpolation/penguinlinregisomap.pdf")
+par(mar=c(0,0,0,0))
+coords <- a.tmp.2$coords
+
+tmp.2 <- mds.linreg(Z=coords[,1:2], dat=dat0, Class=cols,Var.cols=var.cols, axes.labels=FALSE)
+legend(x='bottomleft',legend=colnames(dat0), pch="|",lty=1,col=var.cols,bg='white')
+#dev.off()
+#tmp
+```
+
+```{r}
+# R^2 values for each variable
+tmp.1 # Proximity plot
+tmp.2 # Isomap plot
+```
+
+## Spline based predictive axes
+
+```{r}
+# Understanding Biplots code by Lubbe and Le Roux
+dyn.load("./SplinesBipl.dll")
+source("./BiplotFunctions.R")
+# Run this to adapt one of their functions to make the spline information
+#   available
+source("./PCO_ACP_Plotting.R")
+```
+
+```{r}
+Z <- a.tmp.1$coords[,1:2]
+X <- dat0#Data[,1:4,drop=FALSE]
+Class <- dat$species
+coords <- Z
+
+# Create one hot encoded dataset
+G <- matrix(0,nrow=nrow(X))
+name.vec <-  unique(Class)
+for(j in unique(Class)){
+G <- cbind(G, Class==j)
+}
+
+G <- G[,-1]
+colnames(G)<- name.vec
+set.seed(152451)
+TTT <- list()
+# X <- dat3
+aa <- Spline.biplot(X=X, Z=Z,return.coords = TRUE,  G = G, samples=list( pch=16))
+#TTT
+```
+
+```{r, fig.asp=1}
+#pdf(file="../graphs/interpolation/penguinsplinerf.pdf")
+par(mar=10*c(0.1,0.1,0.1,0.1))
+plot(
+Z,
+asp=1,
+col=cols,
+main = "",
+xlab="",
+ylab="",
+pch=16, axes =FALSE, frame.plot=TRUE#, 
+)
+
+corner.coord <- par("usr")
+# The four bounds of the plotting area are given by corner.coords. u,d, L, R are the up, down, left and rigtht bounds of the plotting area
+u <- corner.coord[4]
+d <- corner.coord[3]
+L <- corner.coord[1]
+R <- corner.coord[2]
+
+
+aa <- lapply(1:ncol(X),function(i){
+
+              lines(TTT[[i]][,1:2], col=var.cols[i])
+              text(TTT[[i]][TTT[[i]][,4]==1,1:2], labels=TTT[[i]][TTT[[i]][,4]==1,3], col=var.cols[i] )
+              
+              
+              
+              # x and y are y coordinates v is the variable value
+              x <- TTT[[i]][,1]
+              y <- TTT[[i]][,2]
+              v <- TTT[[i]][,3]
+              # Convention: f_(input).(output). 
+              f_x.y <- approxfun(x,y)
+              f_y.x <- approxfun(y,x)
+              f_y.v <- approxfun(y,v)
+              f_x.v <- approxfun(x,v)
+              
+              # Intersection points. (Intersection of f and u)=f.u. Variable value at intersection of f and u = v_f.u
+              f.u <- f_y.x(u)
+              f.d <- f_y.x(d)
+              f.L <- f_x.y(L)
+              f.R <- f_x.y(R)
+              v_f.u <- f_x.v(f.u)
+              v_f.d <- f_x.v(f.d)
+              v_f.L <- f_y.v(f.L)
+              v_f.R <- f_y.v(f.R)
+              
+              
+              # Sides where the axes exit
+              side.u <- (f.u >=L) & (f.u <= R)
+              side.d <- (f.d >=L) & (f.d <= R)
+              side.L <- (f.L >=d) & (f.L <= u)
+              side.R <- (f.R >=d) & (f.R <= u)
+              
+              # Increasing exit side of the axes
+              sidez <- which.max(c(v_f.d*side.d,v_f.L*side.L,v_f.u*side.u,v_f.R*side.R))  # This solution will only work if the maximum variable value in the plotted area is positive.
+              ADJ <-  c((f.d-L)/(R-L),(f.L-d)/(u-d),(f.u-L)/(R-L),(f.R-d)/(u-d))[sidez] # Position on that side
+              })
+legend(x='bottomleft',legend=colnames(dat0), pch="",lty=1,col=var.cols,border = 'black',bg='white')
+#dev.off()
+```
+
+```{r}
+pred.spline.data <- matrix(NA, nrow=dim(X)[1], ncol=dim(X)[2])
+for(i in 1:ncol(X)){
+    axes.coords <- TTT[[i]][,1:2]
+    axes.vals <- TTT[[i]][,3]
+    dist.to.markers <- proxy::dist(coords[,1:2],axes.coords)
+    pred.vals <- axes.vals[apply(dist.to.markers,1,which.min)] 
+    pred.spline.data[,i] <- pred.vals
+}
+1-sapply(1:ncol(X),function(x)sum((pred.spline.data[,x]-X[,x])^2))/(apply(X,2,var)*(n-1))
+#tmp
+```
+
+```{r}
+coords <- Z <- a.tmp.2$coords[,1:2]
+
+set.seed(152451)
+TTT <- list()
+aa <- Spline.biplot(X=X, Z=Z,return.coords = TRUE,  G = G, samples=list( pch=16))
+```
+
+```{r, fig.asp=1}
+#pdf(file="../graphs/interpolation/penguinsplineisomap.pdf")
+par(mar=10*c(0.1,0.1,0.1,0.1))
+plot(
+Z[1:n,1:2],
+asp=1,
+col=cols,
+main = "",
+xlab="",
+ylab="",
+pch=16, 
+axes =FALSE,
+frame.plot=TRUE
+)
+
+corner.coord <- par("usr")
+# The four bounds of the plotting area are given by corner.coords. u,d, L, R are the up, down, left and rigtht bounds of the plotting area
+u <- corner.coord[4]
+d <- corner.coord[3]
+L <- corner.coord[1]
+R <- corner.coord[2]
+
+
+aa <- lapply(1:ncol(X),function(i){
+
+              lines(TTT[[i]][,1:2], col=var.cols[i])
+              text(TTT[[i]][TTT[[i]][,4]==1,1:2], labels=TTT[[i]][TTT[[i]][,4]==1,3], col=var.cols[i] )
+              
+              
+              
+              # x and y are y coordinates v is the variable value
+              x <- TTT[[i]][,1]
+              y <- TTT[[i]][,2]
+              v <- TTT[[i]][,3]
+              # Convention: f_(input).(output). 
+              f_x.y <- approxfun(x,y)
+              f_y.x <- approxfun(y,x)
+              f_y.v <- approxfun(y,v)
+              f_x.v <- approxfun(x,v)
+              
+              # Intersection points. (Intersection of f and u)=f.u. Variable value at intersection of f and u = v_f.u
+              f.u <- f_y.x(u)
+              f.d <- f_y.x(d)
+              f.L <- f_x.y(L)
+              f.R <- f_x.y(R)
+              v_f.u <- f_x.v(f.u)
+              v_f.d <- f_x.v(f.d)
+              v_f.L <- f_y.v(f.L)
+              v_f.R <- f_y.v(f.R)
+              
+              
+              # Sides where the axes exit
+              side.u <- (f.u >=L) & (f.u <= R)
+              side.d <- (f.d >=L) & (f.d <= R)
+              side.L <- (f.L >=d) & (f.L <= u)
+              side.R <- (f.R >=d) & (f.R <= u)
+              
+              # Increasing exit side of the axes
+              sidez <- which.max(c(v_f.d*side.d,v_f.L*side.L,v_f.u*side.u,v_f.R*side.R))  # This solution will only work if the maximum variable value in the plotted area is positive.
+              ADJ <-  c((f.d-L)/(R-L),(f.L-d)/(u-d),(f.u-L)/(R-L),(f.R-d)/(u-d))[sidez] # Position on that side
+              })
+legend(x='bottomleft',legend=colnames(dat0), pch="",lty=1,col=var.cols,border = 'black',bg='white')
+#dev.off()
+```
+
+```{r}
+pred.spline.data <- matrix(NA, nrow=dim(X)[1], ncol=dim(X)[2])
+for(i in 1:ncol(X)){
+    axes.coords <- TTT[[i]][,1:2]
+    axes.vals <- TTT[[i]][,3]
+    dist.to.markers <- proxy::dist(coords[,1:2],axes.coords)
+    pred.vals <- axes.vals[apply(dist.to.markers,1,which.min)] 
+    pred.spline.data[,i] <- pred.vals
+}
+1-sapply(1:ncol(X),function(x)sum((pred.spline.data[,x]-X[,x])^2))/(apply(X,2,var)*(n-1))
+```
