@@ -19,3 +19,8 @@ miss.vals <- dat.full[miss.ind,c(1,3,4,5,6)]
 
 # Palmer Penguins data Variable subset with missing observations removed
 dat <- dat.full[-miss.ind,c(1,3,4,5,6)]
+
+# Colour Palette for the penguins
+Class.int <- as.numeric(unlist(dat[,1]))
+col.vec <- adjustcolor(RColorBrewer::brewer.pal(n=3, name='Dark2'),alpha.f = 0.5)
+cols <- col.vec[Class.int]
